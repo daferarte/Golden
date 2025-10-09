@@ -7,7 +7,7 @@
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 
-// ===== Variables/constantes que declaraste en el .ino =====
+// ===== Constantes/variables que vienen del .ino =====
 extern const int FP_RX_PIN;
 extern const int FP_TX_PIN;
 extern const int MIN_MATCH_CONFIDENCE;
@@ -21,10 +21,31 @@ unsigned long sensorRetryDelay = SENSOR_RETRY_MS;
 unsigned long nextSensorRetryAt = 0;
 
 // ===== Instancias de hardware del sensor =====
-HardwareSerial sensorSerial(2);
+HardwareSerial sensorSerial(2);                         // UART2 en ESP32
 Adafruit_Fingerprint finger = Adafruit_Fingerprint(&sensorSerial);
 
-// ===================== FUNCIONES =====================
+// ===================== Helpers locales (timeouts) =====================
+static bool waitForFinger(unsigned long timeout_ms) {
+  unsigned long t0 = millis();
+  int p = finger.getImage();
+  while (p == FINGERPRINT_NOFINGER && (millis() - t0) < timeout_ms) {
+    delay(80);
+    yield();
+    p = finger.getImage();
+  }
+  return (p == FINGERPRINT_OK);
+}
+
+static bool waitForNoFinger(unsigned long timeout_ms) {
+  unsigned long t0 = millis();
+  while (finger.getImage() != FINGERPRINT_NOFINGER && (millis() - t0) < timeout_ms) {
+    delay(60);
+    yield();
+  }
+  return (millis() - t0) < timeout_ms;
+}
+
+// ===================== API =====================
 
 bool initFingerprintSensor(bool showLCD) {
   Serial.println("\nInicializando sensor de huellas...");
@@ -36,7 +57,7 @@ bool initFingerprintSensor(bool showLCD) {
   delay(200);
   while (sensorSerial.available()) sensorSerial.read();
 
-  for (int i=0; i<3; i++) {
+  for (int i = 0; i < 3; i++) {
     if (finger.verifyPassword()) {
       sensorReady = true;
       sensorRetryDelay = SENSOR_RETRY_MS;
@@ -61,49 +82,59 @@ void scheduleSensorRetry(unsigned long ms) {
 
 void mostrarEstadisticasSensor() {
   if (!sensorReady) { Serial.println("Sensor OFF: sin stats."); return; }
+
   int p = finger.getParameters();
-  if (p == FINGERPRINT_OK) Serial.printf("🔢 Capacidad: %u\n", finger.capacity);
-  else Serial.printf("⚠️ No params (code=%d)\n", p);
+  if (p == FINGERPRINT_OK) {
+    Serial.printf("🔢 Capacidad: %u\n", finger.capacity);
+  } else {
+    Serial.printf("⚠️ No params (code=%d)\n", p);
+  }
 
   p = finger.getTemplateCount();
-  if (p == FINGERPRINT_OK) Serial.printf("📦 Plantillas: %u\n", finger.templateCount);
-  else Serial.printf("⚠️ No count (code=%d)\n", p);
+  if (p == FINGERPRINT_OK) {
+    Serial.printf("📦 Plantillas: %u\n", finger.templateCount);
+  } else {
+    Serial.printf("⚠️ No count (code=%d)\n", p);
+  }
 
-  // Mostrar un resumen en la pantalla usando la API del módulo display
-  String msg = "Cap:" + String(finger.capacity) + " Usadas:" + String(finger.templateCount);
-  mensajeEnPantalla(msg);
+  // Breve resumen en LCD (vía módulo display)
+  mensajeEnPantalla("Cap:" + String(finger.capacity) + " Usadas:" + String(finger.templateCount));
   delay(1000);
 }
 
-// ---- Verificar por huella (compacto) ----
+// ---- Verificar por huella (placeholder guiado) ----
 void verificarAcceso() {
   mensajeEnPantalla("Use 0# para escanear");
   indicarProcesando(); waitMsWithLed(1000);
   enterKeypadMode();
 }
 
-// ---- Identificar Usuario (GET datos) ----
+// ---- Identificar Usuario (placeholder guiado) ----
 void identificarUsuario() {
   mensajeEnPantalla("Use 0# para escanear");
   indicarProcesando(); waitMsWithLed(1000);
   enterKeypadMode();
 }
 
-// ---- Enrolar (resumido) ----
+// ---- Enrolar (con timeouts) ----
 void enrolarNuevoUsuario() {
   if (!sensorReady) { mensajeEnPantalla("Sensor OFF"); indicarFallo(); waitMsWithLed(1000); enterKeypadMode(); return; }
 
+  // Dedo 1
   mensajeEnPantalla("Registro 1/2");
-  while (finger.getImage() != FINGERPRINT_OK) { delay(80); }
+  if (!waitForFinger(10000)) { mensajeEnPantalla("Tiempo agotado"); indicarFallo(); waitMsWithLed(1200); enterKeypadMode(); return; }
   if (finger.image2Tz(1) != FINGERPRINT_OK) { mensajeEnPantalla("Err img1"); indicarFallo(); waitMsWithLed(1000); enterKeypadMode(); return; }
 
-  mensajeEnPantalla("Retira dedo"); delay(800);
-  while (finger.getImage() != FINGERPRINT_NOFINGER) { delay(80); }
+  // Retirar
+  mensajeEnPantalla("Retira dedo");
+  if (!waitForNoFinger(6000)) { mensajeEnPantalla("Retira dedo!"); indicarFallo(); waitMsWithLed(1200); enterKeypadMode(); return; }
 
+  // Dedo 2
   mensajeEnPantalla("Registro 2/2");
-  while (finger.getImage() != FINGERPRINT_OK) { delay(80); }
+  if (!waitForFinger(10000)) { mensajeEnPantalla("Tiempo agotado"); indicarFallo(); waitMsWithLed(1200); enterKeypadMode(); return; }
   if (finger.image2Tz(2) != FINGERPRINT_OK) { mensajeEnPantalla("Err img2"); indicarFallo(); waitMsWithLed(1000); enterKeypadMode(); return; }
 
+  // Modelo + guardar
   if (finger.createModel() != FINGERPRINT_OK) { mensajeEnPantalla("Err modelo"); indicarFallo(); waitMsWithLed(1000); enterKeypadMode(); return; }
 
   if (finger.getTemplateCount() != FINGERPRINT_OK) { mensajeEnPantalla("Err count"); indicarFallo(); waitMsWithLed(1000); enterKeypadMode(); return; }
@@ -120,27 +151,83 @@ void enrolarNuevoUsuario() {
   enterKeypadMode();
 }
 
-// ---- Actualizar huella (resumido) ----
+// ---- Actualizar huella (con timeouts y eventos) ----
 void actualizarHuellaRemoto(int idHuella, int clienteId) {
-  (void)clienteId;
-  if (!sensorReady) { mensajeEnPantalla("Sensor OFF"); indicarFallo(); waitMsWithLed(1000); enterKeypadMode(); return; }
+  (void)clienteId; // por si luego lo usas en backend
+  const unsigned long TMO_COLOCAR = 10000; // 10s para poner dedo
+  const unsigned long TMO_RETIRAR = 6000;  // 6s para retirarlo
 
-  mensajeEnPantalla("Actualizar (" + String(idHuella) + ")");
-  while (finger.getImage() != FINGERPRINT_OK) { delay(80); }
-  if (finger.image2Tz(1) != FINGERPRINT_OK) { mensajeEnPantalla("Err img"); indicarFallo(); waitMsWithLed(1000); enterKeypadMode(); return; }
-  while (finger.getImage() != FINGERPRINT_NOFINGER) { delay(60); }
-  while (finger.getImage() != FINGERPRINT_OK) { delay(80); }
-  if (finger.image2Tz(2) != FINGERPRINT_OK) { mensajeEnPantalla("Err img2"); indicarFallo(); waitMsWithLed(1000); enterKeypadMode(); return; }
-  if (finger.createModel() != FINGERPRINT_OK) { mensajeEnPantalla("Err model"); indicarFallo(); waitMsWithLed(1000); enterKeypadMode(); return; }
+  if (!sensorReady) {
+    mensajeEnPantalla("Sensor OFF");
+    indicarFallo(); waitMsWithLed(1000);
+    publishEvent("finger_update_error", "sensor_off");
+    enterKeypadMode();
+    return;
+  }
+
+  // Paso 1: dedo 1
+  mensajeEnPantalla("Act ID " + String(idHuella) + " - dedo 1");
+  if (!waitForFinger(TMO_COLOCAR)) {
+    mensajeEnPantalla("Tiempo agotado");
+    indicarFallo(); waitMsWithLed(1200);
+    publishEvent("finger_update_timeout", "step1");
+    enterKeypadMode();
+    return;
+  }
+  if (finger.image2Tz(1) != FINGERPRINT_OK) {
+    mensajeEnPantalla("Err img1");
+    indicarFallo(); waitMsWithLed(1000);
+    publishEvent("finger_update_error", "img1");
+    enterKeypadMode();
+    return;
+  }
+
+  // Paso 2: retirar dedo
+  mensajeEnPantalla("Retira dedo");
+  if (!waitForNoFinger(TMO_RETIRAR)) {
+    mensajeEnPantalla("Retira dedo!");
+    indicarFallo(); waitMsWithLed(1200);
+    publishEvent("finger_update_timeout", "retirar");
+    enterKeypadMode();
+    return;
+  }
+
+  // Paso 3: dedo 2
+  mensajeEnPantalla("Act ID " + String(idHuella) + " - dedo 2");
+  if (!waitForFinger(TMO_COLOCAR)) {
+    mensajeEnPantalla("Tiempo agotado");
+    indicarFallo(); waitMsWithLed(1200);
+    publishEvent("finger_update_timeout", "step2");
+    enterKeypadMode();
+    return;
+  }
+  if (finger.image2Tz(2) != FINGERPRINT_OK) {
+    mensajeEnPantalla("Err img2");
+    indicarFallo(); waitMsWithLed(1000);
+    publishEvent("finger_update_error", "img2");
+    enterKeypadMode();
+    return;
+  }
+
+  // Paso 4: crear modelo y guardar
+  if (finger.createModel() != FINGERPRINT_OK) {
+    mensajeEnPantalla("Err modelo");
+    indicarFallo(); waitMsWithLed(1000);
+    publishEvent("finger_update_error", "model");
+    enterKeypadMode();
+    return;
+  }
 
   if (finger.storeModel(idHuella) == FINGERPRINT_OK) {
     mensajeEnPantalla("Huella actualizada");
-    indicarExito();
+    indicarExito(); waitMsWithLed(800);
+    publishEvent("finger_update_ok", nullptr);
   } else {
     mensajeEnPantalla("Err guardar");
-    indicarFallo();
+    indicarFallo(); waitMsWithLed(1200);
+    publishEvent("finger_update_error", "store");
   }
-  waitMsWithLed(1000);
+
   enterKeypadMode();
 }
 
@@ -150,9 +237,11 @@ void borrarTodasLasHuellas() {
   if (finger.emptyDatabase() == FINGERPRINT_OK) {
     mensajeEnPantalla("BD borrada");
     indicarExito();
+    publishEvent("finger_db_cleared", nullptr);
   } else {
     mensajeEnPantalla("Err borrar BD");
     indicarFallo();
+    publishEvent("finger_db_clear_error", nullptr);
   }
   waitMsWithLed(1000);
   enterKeypadMode();
@@ -163,6 +252,7 @@ void sincronizarHuellasDesdeBackend() {
   mensajeEnPantalla("Sync (placeholder)");
   Serial.println("Sincronizar: aquí va tu lógica de descarga Base64 y storeModel().");
   indicarProcesando(); waitMsWithLed(1000);
+  publishEvent("finger_sync_placeholder", nullptr);
   enterKeypadMode();
 }
 
