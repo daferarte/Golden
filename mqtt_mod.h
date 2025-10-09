@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <PubSubClient.h>
 
+
 // ====== Variables/objetos que YA declaras en tu .ino ======
 extern PubSubClient mqtt;   // creado en tu .ino con WiFiClient
 extern const char* MQTT_HOST;

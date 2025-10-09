@@ -13,14 +13,15 @@ const int PIN_G = 26;
 const int PIN_B = 27;
 
 // ====== WiFi ======
-// const char* ssid     = "daferDom";
-// const char* password = "d@f3R4Rt3$";
-const char* ssid     = "WIFI_UCC_LAB_REALMIX";
-const char* password = "R34lm1x_UCC*";
+const char* ssid     = "daferDom";
+const char* password = "d@f3R4Rt3$";
+// const char* ssid     = "WIFI_UCC_LAB_REALMIX";
+// const char* password = "R34lm1x_UCC*";
 
 // ====== Servidor REST ======
 const int   DEVICE_ID       = 1;
-const char* SERVER_BASE_URL = "http://10.162.248.206:8000/api/v1/";
+// const char* SERVER_BASE_URL = "http://10.162.248.206:8000/api/v1/";
+const char* SERVER_BASE_URL = "http://192.168.101.27:8000/api/v1/";
 
 // ====== Timings ======
 unsigned long POLLING_INTERVAL_MS   = 4000;
@@ -38,7 +39,8 @@ const int FINGERPRINT_SCANS    = 2;
 const int MIN_MATCH_CONFIDENCE = 60;
 
 // ====== MQTT ======
-const char* MQTT_HOST = "10.162.248.206";
+// const char* MQTT_HOST = "10.162.248.206";
+const char* MQTT_HOST = "192.168.101.27";
 const int   MQTT_PORT = 1883;
 const char* MQTT_USER = "backend";
 const char* MQTT_PASS = "Deef3137047135$";

@@ -1,6 +1,7 @@
 // mqtt_mod.cpp
 #include "mqtt_mod.h"
 #include <ArduinoJson.h>
+#include "fingerprint_mod.h"   // iniciarEscaneoHuella, actualizarHuellaRemoto, etc.
 
 // ===== Objetos/constantes que vienen del .ino =====
 extern PubSubClient mqtt;
@@ -44,19 +45,20 @@ void publishEvent(const char* type, const char* info) {
 
   char js[192];
   serializeJson(ev, js, sizeof(js));
-  mqtt.publish(T_EVENT.c_str(), js);
+  mqtt.publish(T_EVENT.c_str(), js);         // retain=false (default)
 }
 
 // ---------- Callback de mensajes ----------
 void onMqttMessage(char* topic, byte* payload, unsigned int len) {
-  // Log opcional
+  // Log del crudo
   Serial.printf("📥 MQTT mensaje en [%s]: ", topic);
   Serial.write(payload, len);
   Serial.println();
 
   StaticJsonDocument<512> d;
-  if (deserializeJson(d, payload, len)) {
-    Serial.println("❌ JSON inválido en cmd.");
+  DeserializationError derr = deserializeJson(d, payload, len);
+  if (derr) {
+    Serial.printf("❌ JSON inválido en cmd: %s\n", derr.c_str());
     return;
   }
 
@@ -64,9 +66,17 @@ void onMqttMessage(char* topic, byte* payload, unsigned int len) {
   const char* action = d["action"] | d["comando"] | "";
   const char* id     = d["id"] | "";
 
-  // Parámetros opcionales
-  int clienteId = d["cliente_id"] | 0;
-  int idHuella  = d["id_huella"]  | 0;
+  // Parámetros opcionales (acepta payload anidado y plano)
+  JsonVariant p = d["payload"];
+  int clienteId = 0;
+  int idHuella  = 0;
+  if (!p.isNull()) {
+    clienteId = p["cliente_id"] | 0;
+    idHuella  = p["id_huella"]  | 0;
+  }
+  // fallback si vienen planos
+  if (clienteId == 0) clienteId = d["cliente_id"] | 0;
+  if (idHuella  == 0) idHuella  = d["id_huella"]  | 0;
 
   bool ok = false;
   const char* err = nullptr;
@@ -78,37 +88,38 @@ void onMqttMessage(char* topic, byte* payload, unsigned int len) {
   else if (strcmp(action, "update") == 0) {
     if (clienteId > 0 && idHuella > 0) {
       Serial.printf("➡️ update: cliente_id=%d, id_huella=%d\n", clienteId, idHuella);
-      actualizarHuellaRemoto(idHuella, clienteId);
-      ok = true; // la función maneja UI/errores; aquí confirmamos recibido
       publishEvent("finger_update_cmd", "received");
+      actualizarHuellaRemoto(idHuella, clienteId); // maneja UI/errores internamente
+      ok = true; // recibimos y ejecutamos el comando
     } else {
       err = "missing cliente_id or id_huella";
       Serial.println("❌ update sin cliente_id/id_huella");
+      publishEvent("cmd_update_invalid", "missing_fields");
     }
   }
   else if (strcmp(action, "enroll") == 0) {
     Serial.println("➡️ enroll");
+    publishEvent("finger_enroll_cmd", "received");
     enrolarNuevoUsuario();
     ok = true;
-    publishEvent("finger_enroll_cmd", "received");
   }
   else if (strcmp(action, "delete") == 0) {
     Serial.println("➡️ delete (borrar todas)");
+    publishEvent("finger_delete_cmd", "received");
     borrarTodasLasHuellas();
     ok = true;
-    publishEvent("finger_delete_cmd", "received");
   }
   else if (strcmp(action, "sync") == 0) {
     Serial.println("➡️ sync");
+    publishEvent("finger_sync_cmd", "received");
     sincronizarHuellasDesdeBackend();
     ok = true;
-    publishEvent("finger_sync_cmd", "received");
   }
   else if (strcmp(action, "verify") == 0 || strcmp(action, "search") == 0) {
     Serial.println("➡️ verify/search -> iniciarEscaneoHuella");
-    iniciarEscaneoHuella();
-    ok = true;
     publishEvent("finger_verify_cmd", "received");
+    iniciarEscaneoHuella();  // entra en flujo: espera dedo, busca, valida backend
+    ok = true;
   }
   else {
     err = "unknown action";
@@ -116,14 +127,14 @@ void onMqttMessage(char* topic, byte* payload, unsigned int len) {
   }
 
   // ACK al topic /cmd/ack
-  StaticJsonDocument<160> ack;
+  StaticJsonDocument<192> ack;
   ack["id"] = id;
   ack["ok"] = ok;
   ack["action"] = action;
   if (err) ack["error"] = err;
   ack["ts"] = (long)(millis()/1000);
 
-  char out[160];
+  char out[192];
   serializeJson(ack, out, sizeof(out));
   mqtt.publish(T_ACK.c_str(), out);
 }
