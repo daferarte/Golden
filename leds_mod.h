@@ -5,12 +5,13 @@
 // ===== Tipos y estado (ya existen en tu .ino) =====
 // Deja estas ENUM y variables DEFINIDAS en tu .ino.
 // Aquí solo las "vemos" para poder usarlas en el módulo.
-enum LedMode   { MODE_PULSE, MODE_FIXED };
+enum LedMode   { MODE_PULSE, MODE_FIXED, MODE_STATIC };
 enum FixedKind { FIX_GREEN, FIX_RED };
 
 extern LedMode  ledMode;          // definido en tu .ino
 extern FixedKind fixedKind;       // definido en tu .ino
 extern unsigned long feedbackUntil;  // definido en tu .ino
+extern uint8_t currentR, currentG, currentB; // Color estático actual
 
 // ===== Constantes/pines que ya defines en tu .ino =====
 extern const unsigned long PULSE_PERIOD_MS;

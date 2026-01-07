@@ -17,6 +17,11 @@ extern String T_STATE;
 extern String T_EVENT;
 extern String T_CONFIG;
 
+// Variables LED globales (definidas en Golden.ino)
+extern uint8_t currentR, currentG, currentB;
+extern void setColor(uint8_t r, uint8_t g, uint8_t b); // para actualizar directo
+extern void saveLedColor(uint8_t r, uint8_t g, uint8_t b); // para guardar y actualizar
+
 // ====== API pública (mismas funciones que ya usas) ======
 void ensureMqttConnected();
 void onMqttMessage(char* topic, byte* payload, unsigned int len);

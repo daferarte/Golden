@@ -29,10 +29,35 @@
 // -- ⚙️ ESTADO / OBJETOS GLOBALES (no-config)
 // -----------------------------------------------------------------------------
 
+#include <Preferences.h>
+
+// -----------------------------------------------------------------------------
+
 // LED (enums definidos en leds_mod.h)
-LedMode     ledMode       = MODE_PULSE;
+LedMode     ledMode       = MODE_STATIC;
 FixedKind   fixedKind     = FIX_GREEN;
 unsigned long feedbackUntil = 0;
+// Color inicial (Gold por defecto, o apagado si prefieres) -> Gold (255, 220, 4)
+uint8_t currentR = 255;
+uint8_t currentG = 220;
+uint8_t currentB = 4;
+
+Preferences preferences;
+
+void saveLedColor(uint8_t r, uint8_t g, uint8_t b) {
+  currentR = r;
+  currentG = g;
+  currentB = b;
+  setColor(r, g, b);
+  
+  preferences.begin("config", false); // Namespace "config", RW
+  preferences.putUChar("led_r", r);
+  preferences.putUChar("led_g", g);
+  preferences.putUChar("led_b", b);
+  preferences.end();
+  
+  Serial.println("💾 Config RGB guardada en NVS.");
+}
 
 // Wiegand (teclado)
 #define PIN_D0 4
@@ -92,10 +117,18 @@ void setup() {
   pinMode(PIN_R, OUTPUT);
   pinMode(PIN_G, OUTPUT);
   pinMode(PIN_B, OUTPUT);
-  ledMode = MODE_PULSE;
+  ledMode = MODE_STATIC;
 
   // Servo (módulo puerta)
   doorBegin(SERVO_PIN, SERVO_MIN_PULSE, SERVO_MAX_PULSE, SERVO_CLOSED_ANGLE, SERVO_OPEN_ANGLE);
+  
+  // Cargar color guardado
+  preferences.begin("config", true); // RO mode
+  currentR = preferences.getUChar("led_r", 255);
+  currentG = preferences.getUChar("led_g", 220);
+  currentB = preferences.getUChar("led_b", 4);
+  preferences.end();
+  Serial.printf("🌈 Color inicial cargado: %d, %d, %d\n", currentR, currentG, currentB);
 
   Serial.println("\nIniciando Wiegand...");
   wg.begin(PIN_D0, PIN_D1);
@@ -346,6 +379,8 @@ void processSerialCommand(String line) {
     else if (line == "!info") {
       mostrarEstadisticasSensor();
       Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+      Serial.println("📡 MQTT Topics:");
+      Serial.println("   CMD: " + T_CMD);
     }
     else {
       Serial.println("⚠️ Comando desconocido. Disponibles: !update, !enroll, !delete, !info");
@@ -501,7 +536,7 @@ bool abrirPuerta() {
     mensajeEnPantalla("Cerrando puerta");
   };
   auto onDone = []() {
-    ledMode = MODE_PULSE;
+    ledMode = MODE_STATIC;
     keypadLocked = false;
     enterKeypadMode();
   };
@@ -514,5 +549,13 @@ bool abrirPuerta() {
 // LED helpers
 void indicarExito(){ triggerFeedback(FIX_GREEN, 1800); }
 void indicarFallo(){ triggerFeedback(FIX_RED,   1800); }
-void indicarProcesando(){ ledMode = MODE_PULSE; }
+void indicarProcesando(){ ledMode = MODE_STATIC; }
 void apagarLeds(){ setColor(0,0,0); }
+
+void smartDelay(unsigned long ms) {
+  unsigned long start = millis();
+  while ((millis() - start) < ms) {
+    if (mqtt.connected()) mqtt.loop(); 
+    delay(1);
+  }
+}

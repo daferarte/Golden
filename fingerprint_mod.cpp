@@ -47,8 +47,7 @@ static bool waitForFinger(unsigned long timeout_ms) {
     } else if (p == FINGERPRINT_NOFINGER) {
       okCount = 0;
     }
-    delay(80);
-    yield();
+    smartDelay(80);
   }
   return false;
 }
@@ -65,8 +64,7 @@ static bool waitForNoFinger(unsigned long timeout_ms) {
     } else {
       noCount = 0;
     }
-    delay(60);
-    yield();
+    smartDelay(60);
   }
   return false;
 }
@@ -125,7 +123,7 @@ void mostrarEstadisticasSensor() {
 
   // Breve resumen en LCD
   mensajeEnPantalla("Cap:" + String(finger.capacity) + " Usadas:" + String(finger.templateCount));
-  delay(1000);
+  smartDelay(1000);
 }
 
 // ---- Verificar por huella (placeholder guiado) ----
@@ -215,7 +213,7 @@ void actualizarHuellaRemoto(int idHuella, int clienteId) {
     showMsg("Forzando...", 600);
     publishEvent("finger_update_warn", "retirar_forzado");
     // Pausa para evitar imagen idéntica en el segundo pase.
-    delay(800);
+    smartDelay(800);
   }
 
   // Paso 3: dedo 2

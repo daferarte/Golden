@@ -2,6 +2,9 @@
 #pragma once
 #include <Arduino.h>
 
+// Helper global para delay no bloqueante (mantiene MQTT vivo)
+extern void smartDelay(unsigned long ms);
+
 // ====== Pines ======
 extern const int SERVO_PIN;
 extern const int SDA_PIN;

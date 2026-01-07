@@ -85,6 +85,24 @@ void onMqttMessage(char* topic, byte* payload, unsigned int len) {
     ok = abrirPuerta();
     publishEvent("door_open", ok ? "ok" : "fail");
   }
+  else if (strcmp(action, "set_led") == 0 || strcmp(action, "led") == 0) {
+    // Lectura de color
+    int r = d["red"]   | -1;
+    int g = d["green"] | -1;
+    int b = d["blue"]  | -1;
+    
+    if (r >= 0 && g >= 0 && b >= 0) {
+      // Guardar y aplicar (persistencia)
+      saveLedColor((uint8_t)r, (uint8_t)g, (uint8_t)b);
+      
+      Serial.printf("🎨 LED Action: %d, %d, %d\n", r, g, b);
+      publishEvent("led_set", "ok");
+      ok = true;
+    } else {
+      err = "missing red/green/blue";
+      Serial.println("❌ set_led sin colores");
+    }
+  }
   else if (strcmp(action, "update") == 0) {
     if (clienteId > 0 && idHuella > 0) {
       Serial.printf("➡️ update: cliente_id=%d, id_huella=%d\n", clienteId, idHuella);

@@ -1,5 +1,6 @@
 // leds_mod.cpp
 #include "leds_mod.h"
+#include "config.h"
 
 // Helpers internos (no expuestos)
 static uint8_t pulseBrightness() {
@@ -39,15 +40,21 @@ void triggerFeedback(FixedKind kind, unsigned long ms) {
 void updateLed() {
   if (ledMode == MODE_FIXED) {
     if ((long)(millis() - feedbackUntil) < 0) return;
-    ledMode = MODE_PULSE;
+    ledMode = MODE_STATIC; // Regresar a modo estático (antes era PULSE)
   }
-  drawPulseGold();
+  
+  if (ledMode == MODE_STATIC) {
+    setColor(currentR, currentG, currentB);
+  } else {
+    // Fallback: si por alguna razón sigue en pulse (no debería)
+    drawPulseGold();
+  }
 }
 
 void waitMsWithLed(unsigned long ms) {
   unsigned long t0 = millis();
   while ((millis() - t0) < ms) {
     updateLed();
-    delay(10);
+    smartDelay(10); // Mantiene MQTT vivo mientras espera
   }
 }
