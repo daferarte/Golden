@@ -245,69 +245,140 @@ void renderCedulaBuffer() {
   displayShowTwoLines("Digita tu cedula", l2);
 }
 
-void handleWiegand() {
-  if (wg.available()) {
-    uint64_t code = wg.getCode();
-    lastKeyTime = millis();
+// Procesa un código (sea de Wiegand o simulado por Serial)
+void processKeyCode(uint64_t code) {
+  lastKeyTime = millis();
 
-    // Comienza entrada → bloquear
-    if (!keypadLocked && (code <= 9 || (code >= 48 && code <= 57))) {
-      keypadLocked = true;
-      Serial.println("🔒 Teclado activo (bloqueo polling).");
-      mensajeEnPantalla("Modo Teclado");
+  // Comienza entrada → bloquear
+  if (!keypadLocked && (code <= 9 || (code >= 48 && code <= 57))) {
+    keypadLocked = true;
+    Serial.println("🔒 Teclado activo (bloqueo polling).");
+    mensajeEnPantalla("Modo Teclado");
+  }
+
+  // *
+  if (isStar(code)) {
+    cedulaBuffer = "";
+    keypadLocked = false;
+    Serial.println("✖ Borrado por '*', desbloqueado.");
+    renderCedulaBuffer();
+    return;
+  }
+
+  // #
+  if (isHash(code)) {
+    if (cedulaBuffer.length() == 0) {
+      mensajeEnPantalla("Buffer vacio");
+      indicarFallo(); waitMsWithLed(800); enterKeypadMode();
+      keypadLocked = false;
+      return;
     }
 
-    // *
-    if (isStar(code)) {
+    // Secreto -> abrir
+    if (cedulaBuffer == String(SECRET_CODE)) {
+      Serial.println("🔐 Codigo secreto -> abrirPuerta");
+      mensajeEnPantalla("Codigo secreto");
+      indicarExito();
+      abrirPuerta();
       cedulaBuffer = "";
       keypadLocked = false;
-      Serial.println("✖ Borrado por '*', desbloqueado.");
-      renderCedulaBuffer();
+      enterKeypadMode();
       return;
     }
 
-    // #
-    if (isHash(code)) {
-      if (cedulaBuffer.length() == 0) {
-        mensajeEnPantalla("Buffer vacio");
-        indicarFallo(); waitMsWithLed(800); enterKeypadMode();
-        keypadLocked = false;
-        return;
-      }
-
-      // Secreto -> abrir
-      if (cedulaBuffer == String(SECRET_CODE)) {
-        Serial.println("🔐 Codigo secreto -> abrirPuerta");
-        mensajeEnPantalla("Codigo secreto");
-        indicarExito();
-        abrirPuerta();
-        cedulaBuffer = "";
-        keypadLocked = false;
-        enterKeypadMode();
-        return;
-      }
-
-      // 0# → escaneo por huella
-      if (cedulaBuffer == "0") {
-        Serial.println("👉 0# detectado: iniciar escaneo de huella");
-        cedulaBuffer = "";
-        keypadLocked = false;
-        iniciarEscaneoHuella(); // módulo de huellas
-        return;
-      }
-
-      // Verificar cédula normal (HTTP)
-      verificarCedulaYAccionar(cedulaBuffer);
+    // 0# → escaneo por huella
+    if (cedulaBuffer == "0") {
+      Serial.println("👉 0# detectado: iniciar escaneo de huella");
+      cedulaBuffer = "";
       keypadLocked = false;
+      iniciarEscaneoHuella(); // módulo de huellas
       return;
     }
 
-    // Dígitos
-    if (code <= 9) cedulaBuffer += char('0' + (uint8_t)code);
-    else if (code >= 48 && code <= 57) cedulaBuffer += char(code);
-    else Serial.printf("Tecla desconocida: %llu\n", (unsigned long long)code);
+    // Verificar cédula normal (HTTP)
+    verificarCedulaYAccionar(cedulaBuffer);
+    keypadLocked = false;
+    return;
+  }
 
-    renderCedulaBuffer();
+  // Dígitos
+  if (code <= 9) cedulaBuffer += char('0' + (uint8_t)code);
+  else if (code >= 48 && code <= 57) cedulaBuffer += char(code);
+  else Serial.printf("Tecla desconocida: %llu\n", (unsigned long long)code);
+
+  renderCedulaBuffer();
+}
+
+// --- Buffer global para Serial ---
+String serialInputBuffer = "";
+
+void processSerialCommand(String line) {
+  line.trim();
+  if (line.length() == 0) return;
+
+  // 1. Comandos de Debug (empiezan con '!')
+  if (line.startsWith("!")) {
+    Serial.println("🔧 COMANDO DEBUG: " + line);
+    
+    // !update <id> <cliente>
+    if (line.startsWith("!update ")) {
+      // Parsear argumentos simples
+      int firstSpace = line.indexOf(' ');
+      int secondSpace = line.indexOf(' ', firstSpace + 1);
+      
+      if (firstSpace > 0 && secondSpace > 0) {
+        int idHuella = line.substring(firstSpace + 1, secondSpace).toInt();
+        int clienteId = line.substring(secondSpace + 1).toInt();
+        Serial.printf("➡️ Ejecutando actualizarHuellaRemoto(%d, %d)\n", idHuella, clienteId);
+        actualizarHuellaRemoto(idHuella, clienteId);
+      } else {
+        Serial.println("❌ Uso: !update <id_huella> <cliente_id>");
+      }
+    } 
+    else if (line == "!enroll") {
+      Serial.println("➡️ Ejecutando enrolarNuevoUsuario()");
+      enrolarNuevoUsuario();
+    }
+    else if (line == "!delete") {
+      Serial.println("➡️ Ejecutando borrarTodasLasHuellas()");
+      borrarTodasLasHuellas();
+    }
+    else if (line == "!info") {
+      mostrarEstadisticasSensor();
+      Serial.printf("IP: %s\n", WiFi.localIP().toString().c_str());
+    }
+    else {
+      Serial.println("⚠️ Comando desconocido. Disponibles: !update, !enroll, !delete, !info");
+    }
+    return;
+  }
+
+  // 2. Si no es comando, es simulación de teclado (envía toda la cadena carácter por carácter)
+  Serial.println("⌨️ Simulación Teclado (Batch): " + line);
+  for (unsigned int i = 0; i < line.length(); i++) {
+    char c = line.charAt(i);
+    processKeyCode((uint64_t)c);
+    delay(50); // Pequeña pausa para 'sentir' el tecleo
+  }
+}
+
+void handleWiegand() {
+  // 1. Entrada física Wiegand
+  if (wg.available()) {
+    processKeyCode(wg.getCode());
+  }
+
+  // 2. Simulación por Serial (Buffering completo)
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n' || c == '\r') {
+      if (serialInputBuffer.length() > 0) {
+        processSerialCommand(serialInputBuffer);
+        serialInputBuffer = "";
+      }
+    } else {
+      serialInputBuffer += c;
+    }
   }
 
   // Timeout
@@ -344,13 +415,15 @@ void verificarCedulaYAccionar(const String& cedula) {
   mensajeEnPantalla("Verificando...");
   int httpResponseCode = http.POST(body);
 
-  if (httpResponseCode == 200) {
+  if (httpResponseCode == 200 || httpResponseCode == 404) {
     String payload = http.getString();
     StaticJsonDocument<256> resp;
     DeserializationError err = deserializeJson(resp, payload);
     if (!err) {
       bool permitido = resp["permitido"] | false;
-      const char* mensaje = resp["mensaje"] | (permitido ? "Acceso" : "Denegado");
+      const char* mensaje = resp["mensaje"];
+      if (!mensaje) mensaje = resp["detail"];
+      if (!mensaje) mensaje = (permitido ? "Acceso" : "Denegado");
       mensajeEnPantalla(String(mensaje));
 
       if (permitido) {
@@ -359,16 +432,17 @@ void verificarCedulaYAccionar(const String& cedula) {
         (void)okOpen;
         publishEvent("access_card_ok", nullptr);
       } else {
-        indicarFallo(); waitMsWithLed(1500);
+        // En 404 también cae aquí si 'permitido' es false
+        indicarFallo(); waitMsWithLed(ERROR_DISPLAY_MS);
         publishEvent("access_card_denied", nullptr);
       }
     } else {
       mensajeEnPantalla("Error respuesta");
-      indicarFallo(); waitMsWithLed(1500);
+      indicarFallo(); waitMsWithLed(ERROR_DISPLAY_MS);
     }
   } else {
     mensajeEnPantalla("Error servidor");
-    indicarFallo(); waitMsWithLed(1500);
+    indicarFallo(); waitMsWithLed(ERROR_DISPLAY_MS);
   }
   http.end();
   enterKeypadMode();

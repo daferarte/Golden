@@ -6,6 +6,7 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include "config.h"
 
 // ===== Helpers de UI =====
 static void showMsg(const String& s, unsigned long hold_ms = 0) {
@@ -338,26 +339,28 @@ void iniciarEscaneoHuella() {
     http.addHeader("Content-Type", "application/json");
     String body = String("{\"id_huella\":") + String(foundId) + "}";
     int rc = http.POST(body);
-    if (rc == 200) {
+    if (rc == 200 || rc == 404) {
       String payload = http.getString();
       StaticJsonDocument<256> doc; DeserializationError e = deserializeJson(doc, payload);
       if (!e) {
         bool permitido = doc["permitido"] | false;
-        const char* msg = doc["mensaje"] | (permitido ? "Acceso" : "Denegado");
+        const char* msg = doc["mensaje"];
+        if (!msg) msg = doc["detail"];
+        if (!msg) msg = (permitido ? "Acceso" : "Denegado");
         showMsg(String(msg));
         if (permitido) { indicarExito(); abrirPuerta(); publishEvent("access_fingerprint_ok", nullptr); }
-        else { indicarFallo(); waitMsWithLed(1200); publishEvent("access_fingerprint_denied", nullptr); }
+        else { indicarFallo(); waitMsWithLed(ERROR_DISPLAY_MS); publishEvent("access_fingerprint_denied", nullptr); }
       } else {
-        showMsg("Resp invalida", 1200);
+        showMsg("Resp invalida", ERROR_DISPLAY_MS);
         indicarFallo();
       }
     } else {
-      showMsg("Error servidor", 1200);
+      showMsg("Error servidor", ERROR_DISPLAY_MS);
       indicarFallo();
     }
     http.end();
   } else {
-    showMsg("Sin WiFi", 1200);
+    showMsg("Sin WiFi", ERROR_DISPLAY_MS);
     indicarFallo();
   }
 

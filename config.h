@@ -25,6 +25,7 @@ extern const char* SERVER_BASE_URL;
 extern unsigned long POLLING_INTERVAL_MS;
 extern const unsigned long DOOR_OPEN_TIME_MS;
 extern const unsigned long DOOR_CLOSE_DELAY_MS;
+extern const unsigned long ERROR_DISPLAY_MS;
 
 // ====== Servo mecánica ======
 extern const int SERVO_MIN_PULSE;
