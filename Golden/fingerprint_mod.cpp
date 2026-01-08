@@ -78,7 +78,7 @@ bool initFingerprintSensor(bool showLCD) {
   sensorSerial.end();
   sensorSerial.begin(57600, SERIAL_8N1, FP_RX_PIN, FP_TX_PIN);
   finger.begin(57600);
-  delay(200);
+  smartDelay(200);
   while (sensorSerial.available()) sensorSerial.read();
 
   for (int i = 0; i < 3; i++) {
@@ -90,7 +90,7 @@ bool initFingerprintSensor(bool showLCD) {
       mostrarEstadisticasSensor();
       return true;
     }
-    delay(150);
+    smartDelay(150);
   }
 
   sensorReady = false;
@@ -294,7 +294,7 @@ void iniciarEscaneoHuella() {
   unsigned long t0 = millis();
   int p = finger.getImage();
   while (p == FINGERPRINT_NOFINGER && (millis() - t0) < 10000) {
-    delay(100);
+    smartDelay(100);
     p = finger.getImage();
   }
 

@@ -109,7 +109,16 @@ inline bool isStar(uint64_t code){ return (code==27 || code==42 || code==10); } 
 // -----------------------------------------------------------------------------
 void setup() {
   Serial.begin(115200);
-  delay(50);
+  delay(100);
+
+  Serial.println("\n=== INICIO SISTEMA ===");
+
+  // 1. Iniciar Wiegand PRIMERO (Prioridad Hardware)
+  Serial.println("Iniciando Wiegand...");
+  pinMode(PIN_D0, INPUT_PULLUP); // Refuerzo eléctrico
+  pinMode(PIN_D1, INPUT_PULLUP);
+  wg.begin(PIN_D0, PIN_D1);
+  Serial.println("✅ Wiegand listo. Digita en cualquier momento.");
 
   // UI (LCD autodetect)
   displayBegin();
@@ -122,24 +131,22 @@ void setup() {
   // Servo (módulo puerta)
   doorBegin(SERVO_PIN, SERVO_MIN_PULSE, SERVO_MAX_PULSE, SERVO_CLOSED_ANGLE, SERVO_OPEN_ANGLE);
   
-  // Cargar color guardado
-  preferences.begin("config", true); // RO mode
+  // Cargar color
+  preferences.begin("config", true);
   currentR = preferences.getUChar("led_r", 255);
   currentG = preferences.getUChar("led_g", 220);
   currentB = preferences.getUChar("led_b", 4);
   preferences.end();
-  Serial.printf("🌈 Color inicial cargado: %d, %d, %d\n", currentR, currentG, currentB);
+  Serial.printf("🌈 Color cargado: %d, %d, %d\n", currentR, currentG, currentB);
 
-  Serial.println("\nIniciando Wiegand...");
-  wg.begin(PIN_D0, PIN_D1);
-  Serial.println("Listo. Digita en el teclado.");
-
+  // WiFi con teclado activo
   mensajeEnPantalla("Conectando WIFI");
   indicarProcesando();
   conectarWiFi();
 
   // MQTT
-  ensureMqttConnected();
+  // MQTT - Connection handled in loop (non-blocking)
+  // blockingMqttConnect(); // REMOVED to prioritize Keypad startup
 
   // Huellas (módulo)
   initFingerprintSensor(true);
@@ -153,14 +160,31 @@ void setup() {
 // -- LOOP
 // -----------------------------------------------------------------------------
 void loop() {
-  // MQTT
-  if (!mqtt.connected()) ensureMqttConnected();
-  mqtt.loop();
+  // 1. PRIORIDAD ABSOLUTA: Teclado
+  handleWiegand();
 
+  // 2. Si el usuario está tecleando (bloqueado), SE IGNORA TODO LO DE RED
+  if (keypadLocked) {
+     // Solo revisamos timeout del teclado
+     if (cedulaBuffer.length() > 0 && (millis() - lastKeyTime > CEDULA_TIMEOUT_MS)) {
+        Serial.println("⌛ Timeout teclado: limpiar/desbloquear.");
+        cedulaBuffer = "";
+        keypadLocked = false;
+        enterKeypadMode();
+     }
+     // Retornamos inmediato para seguir escuchando teclas a máxima velocidad
+     return;
+  }
+
+  // 3. Si NO está bloqueado, hacemos tareas de fondo (MQTT, Leds, Sensor)
+  
   // LEDs
   updateLed();
 
-  // Reintento sensor (variables del módulo fingerprint)
+  // MQTT (No bloqueante)
+  nonBlockingMqttLoop();
+
+  // Reintento sensor (variables del módulo fingerprint) Also non-blocking check
   if (!sensorReady && (long)(millis() - nextSensorRetryAt) >= 0) {
     bool ok = initFingerprintSensor(false);
     if (!ok) {
@@ -168,9 +192,6 @@ void loop() {
       scheduleSensorRetry(sensorRetryDelay);
     }
   }
-
-  // Teclado siempre activo
-  handleWiegand();
 
 #if USE_HTTP_POLLING
   // --- Polling de comandos del servidor (HTTP) ---
@@ -400,6 +421,7 @@ void processSerialCommand(String line) {
 void handleWiegand() {
   // 1. Entrada física Wiegand
   if (wg.available()) {
+    Serial.println("⌨️ Wiegand KEY detectada");
     processKeyCode(wg.getCode());
   }
 
@@ -491,7 +513,7 @@ void conectarWiFi() {
   WiFi.begin(ssid, password);
   int intentos = 0;
   while (WiFi.status() != WL_CONNECTED && intentos < 30) {
-    delay(300); Serial.print(".");
+    smartDelay(300); Serial.print(".");
     intentos++;
   }
   if (WiFi.status() == WL_CONNECTED) {
@@ -555,7 +577,8 @@ void apagarLeds(){ setColor(0,0,0); }
 void smartDelay(unsigned long ms) {
   unsigned long start = millis();
   while ((millis() - start) < ms) {
-    if (mqtt.connected()) mqtt.loop(); 
+    // if (mqtt.connected()) mqtt.loop(); // REMOVED: Absolute priority to Keypad
+    handleWiegand(); 
     delay(1);
   }
 }

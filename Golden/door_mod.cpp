@@ -1,5 +1,6 @@
 // door_mod.cpp
 #include "door_mod.h"
+#include "config.h"
 
 static Servo door_servo;
 static int   g_closedAngle = 0;
@@ -35,7 +36,7 @@ bool doorOpenAndClose(unsigned long openMs,
   unsigned long t0 = millis();
   while (millis() - t0 < openMs) {
     if (tick) tick();
-    delay(10);
+    smartDelay(10);
   }
 
   // Avisar que vamos a cerrar
@@ -46,7 +47,7 @@ bool doorOpenAndClose(unsigned long openMs,
   t0 = millis();
   while (millis() - t0 < closeDelayMs) {
     if (tick) tick();
-    delay(10);
+    smartDelay(10);
   }
 
   // Fin

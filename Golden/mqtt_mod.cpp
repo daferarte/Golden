@@ -1,5 +1,5 @@
-// mqtt_mod.cpp
 #include "mqtt_mod.h"
+#include <WiFi.h>
 #include <ArduinoJson.h>
 #include "fingerprint_mod.h"   // iniciarEscaneoHuella, actualizarHuellaRemoto, etc.
 
@@ -157,30 +157,60 @@ void onMqttMessage(char* topic, byte* payload, unsigned int len) {
   mqtt.publish(T_ACK.c_str(), out);
 }
 
+#include "config.h"
+
 // ---------- Conexión / reconexión ----------
-void ensureMqttConnected() {
+// ---------- Conexión / reconexión ----------
+
+static bool attemptConnectOneShot() {
+  String cid = String("esp32-") + String((uint32_t)ESP.getEfuseMac(), HEX);
+
+  StaticJsonDocument<64> will;
+  will["online"] = false;
+  char willMsg[64];
+  serializeJson(will, willMsg, sizeof(willMsg));
+
+  if (mqtt.connect(cid.c_str(), MQTT_USER, MQTT_PASS,
+                    T_STATE.c_str(), 1, true, willMsg)) {
+      mqtt.subscribe(T_CMD.c_str(), 1);
+      mqtt.subscribe(T_CONFIG.c_str(), 1);
+      mqttPublishState(true);
+      Serial.println("✅ MQTT conectado");
+      return true;
+  }
+  return false;
+}
+
+void blockingMqttConnect() {
   mqtt.setServer(MQTT_HOST, MQTT_PORT);
   mqtt.setCallback(onMqttMessage);
   mqtt.setBufferSize(1024);
 
   while (!mqtt.connected()) {
-    String cid = String("esp32-") + String((uint32_t)ESP.getEfuseMac(), HEX);
-
-    // LWT: estado offline (retain)
-    StaticJsonDocument<64> will;
-    will["online"] = false;
-    char willMsg[64];
-    serializeJson(will, willMsg, sizeof(willMsg));
-
-    if (mqtt.connect(cid.c_str(), MQTT_USER, MQTT_PASS,
-                     T_STATE.c_str(), 1, true, willMsg)) {
-      mqtt.subscribe(T_CMD.c_str(), 1);
-      mqtt.subscribe(T_CONFIG.c_str(), 1);
-      mqttPublishState(true);
-      Serial.println("✅ MQTT conectado");
+    if (attemptConnectOneShot()) {
+      break;
     } else {
-      Serial.println("❌ MQTT connect fallo, reintentando...");
-      delay(1500);
+      Serial.println("❌ MQTT connect fallo (blocking), reintentando...");
+      smartDelay(1500);
     }
+  }
+}
+
+void nonBlockingMqttLoop() {
+  if (WiFi.status() != WL_CONNECTED) return; // Sin internet no hay MQTT (ni intentos)
+
+  if (mqtt.connected()) {
+    mqtt.loop();
+    return;
+  }
+
+
+  // Not connected: try periodically
+  static unsigned long lastMqttAttempt = 0;
+  unsigned long now = millis();
+  if (now - lastMqttAttempt > 3000) { // Retry every 3s
+    lastMqttAttempt = now;
+    Serial.println("🔄 MQTT retry (non-blocking)...");
+    attemptConnectOneShot();
   }
 }

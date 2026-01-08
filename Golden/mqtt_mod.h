@@ -23,7 +23,9 @@ extern void setColor(uint8_t r, uint8_t g, uint8_t b); // para actualizar direct
 extern void saveLedColor(uint8_t r, uint8_t g, uint8_t b); // para guardar y actualizar
 
 // ====== API pública (mismas funciones que ya usas) ======
-void ensureMqttConnected();
+// Connection management
+void blockingMqttConnect();
+void nonBlockingMqttLoop();
 void onMqttMessage(char* topic, byte* payload, unsigned int len);
 void mqttPublishState(bool online);
 void publishEvent(const char* type, const char* info = nullptr);
