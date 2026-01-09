@@ -5,6 +5,8 @@
 
 #include <Adafruit_Fingerprint.h>
 #include <HardwareSerial.h>
+#include "soc/soc.h"           // Brownout fix
+#include "soc/rtc_cntl_reg.h"  // Brownout fix
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include "base64.h"
@@ -108,6 +110,8 @@ inline bool isStar(uint64_t code){ return (code==27 || code==42 || code==10); } 
 // -- SETUP
 // -----------------------------------------------------------------------------
 void setup() {
+  WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0); // Desactivar detector de caida de voltaje (Brownout)
+  setCpuFrequencyMhz(240); // Forzar máximo rendimiento CPU (240MHz)
   Serial.begin(115200);
   delay(100);
 
@@ -130,6 +134,9 @@ void setup() {
 
   // Servo (módulo puerta)
   doorBegin(SERVO_PIN, SERVO_MIN_PULSE, SERVO_MAX_PULSE, SERVO_CLOSED_ANGLE, SERVO_OPEN_ANGLE);
+  // Asegurar posición cerrada al inicio
+  delay(500); 
+  Serial.println("🚪 Puerta inicializada en CERRADO.");
   
   // Cargar color
   preferences.begin("config", true);
@@ -146,6 +153,8 @@ void setup() {
 
   // MQTT
   // MQTT - Connection handled in loop (non-blocking)
+  Serial.println("🔌 Conectando MQTT inicial (bloqueante)...");
+  blockingMqttConnect(); 
   // blockingMqttConnect(); // REMOVED to prioritize Keypad startup
 
   // Huellas (módulo)
@@ -163,123 +172,28 @@ void loop() {
   // 1. PRIORIDAD ABSOLUTA: Teclado
   handleWiegand();
 
-  // 2. Si el usuario está tecleando (bloqueado), SE IGNORA TODO LO DE RED
-  if (keypadLocked) {
-     // Solo revisamos timeout del teclado
+  // 2. Bloqueo de Tareas de Fondo
+  // Si hay flag de bloqueo O si hay algo en el buffer, asumimos que el usuario está escribiendo.
+  // Esto previene que MQTT interfiera mientras se digita.
+  if (keypadLocked || cedulaBuffer.length() > 0) {
+     
+     // Revisar timeout
      if (cedulaBuffer.length() > 0 && (millis() - lastKeyTime > CEDULA_TIMEOUT_MS)) {
         Serial.println("⌛ Timeout teclado: limpiar/desbloquear.");
         cedulaBuffer = "";
         keypadLocked = false;
         enterKeypadMode();
      }
-     // Retornamos inmediato para seguir escuchando teclas a máxima velocidad
+     
+     // Retornamos inmediato para NO ejecutar MQTT ni nada más
      return;
   }
 
-  // 3. Si NO está bloqueado, hacemos tareas de fondo (MQTT, Leds, Sensor)
-  
-  // LEDs
-  updateLed();
-
-  // MQTT (No bloqueante)
   nonBlockingMqttLoop();
 
-  // Reintento sensor (variables del módulo fingerprint) Also non-blocking check
-  if (!sensorReady && (long)(millis() - nextSensorRetryAt) >= 0) {
-    bool ok = initFingerprintSensor(false);
-    if (!ok) {
-      sensorRetryDelay = min(sensorRetryDelay * 2, SENSOR_RETRY_MAX);
-      scheduleSensorRetry(sensorRetryDelay);
-    }
-  }
+  
 
-#if USE_HTTP_POLLING
-  // --- Polling de comandos del servidor (HTTP) ---
-  if (keypadLocked) {
-    if (cedulaBuffer.length() == 0) {
-      keypadLocked = false;
-      enterKeypadMode();
-    } else if ((millis() - lastKeyTime) > CEDULA_TIMEOUT_MS) {
-      Serial.println("⌛ Timeout teclado: limpiar/desbloquear.");
-      cedulaBuffer = "";
-      keypadLocked = false;
-      enterKeypadMode();
-    }
-    return;
-  }
-
-  static unsigned long nextPollAt = 0;
-  unsigned long now = millis();
-  if ((long)(now - nextPollAt) >= 0) {
-    nextPollAt = now + POLLING_INTERVAL_MS + (uint32_t)random(0, 800);
-
-    if (WiFi.status() != WL_CONNECTED) {
-      Serial.println("⚠️ WiFi caído, reconectando...");
-      conectarWiFi();
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-      HTTPClient http;
-      String url = String(SERVER_BASE_URL) + "dispositivo/dispositivo/" + String(DEVICE_ID) + "/comando";
-      Serial.println("⏳ Consultando: " + url);
-      http.setTimeout(4000);
-      http.begin(url);
-      int httpResponseCode = http.GET();
-
-      if (httpResponseCode == 200) {
-        String payload = http.getString();
-        Serial.println("📩 Respuesta: " + payload);
-
-        if (payload != "{}") {
-          StaticJsonDocument<256> doc;
-          DeserializationError error = deserializeJson(doc, payload);
-          if (!error) {
-            const char* comando = doc["comando"];
-            int clienteId = doc["cliente_id"] | 0;
-            int idHuella  = doc["id_huella"]  | 0;
-
-            apagarLeds();
-            if (strcmp(comando, "update") == 0 && idHuella > 0 && clienteId > 0) {
-              actualizarHuellaRemoto(idHuella, clienteId);
-              confirmarComando("update");
-            } else if (strcmp(comando, "enroll") == 0) {
-              enrolarNuevoUsuario();
-              confirmarComando("enroll");
-            } else if (strcmp(comando, "verify") == 0) {
-              mensajeEnPantalla("Use 0# para escanear");
-              indicarProcesando(); waitMsWithLed(1200);
-              confirmarComando("verify_skipped");
-            } else if (strcmp(comando, "search") == 0) {
-              mensajeEnPantalla("Use 0# para escanear");
-              indicarProcesando(); waitMsWithLed(1200);
-              confirmarComando("search_skipped");
-            } else if (strcmp(comando, "open") == 0) {
-              bool ok = abrirPuerta();
-              confirmarComando("open");
-              (void)ok;
-            } else if (strcmp(comando, "delete") == 0) {
-              borrarTodasLasHuellas();
-              confirmarComando("delete");
-            } else if (strcmp(comando, "sync") == 0) {
-              sincronizarHuellasDesdeBackend();
-              confirmarComando("sync");
-            } else {
-              Serial.println("⚠️ Comando desconocido");
-            }
-            enterKeypadMode(); // ya redibuja
-          } else {
-            Serial.println("⚠️ Error parseando JSON");
-          }
-        } else {
-          Serial.println("ℹ️ Sin comandos.");
-        }
-      } else {
-        Serial.printf("❌ Error HTTP: %d\n", httpResponseCode);
-      }
-      http.end();
-    }
-  }
-#endif
+  
 }
 
 // -----------------------------------------------------------------------------
@@ -289,6 +203,7 @@ void enterKeypadMode() {
   cedulaBuffer = "";
   keypadLocked = false;
   mensajeEnPantalla("Digita tu cedula");
+  setColor(currentR, currentG, currentB); // Restaurar color de reposo
 }
 
 void renderCedulaBuffer() {
@@ -306,7 +221,6 @@ void processKeyCode(uint64_t code) {
   // Comienza entrada → bloquear
   if (!keypadLocked && (code <= 9 || (code >= 48 && code <= 57))) {
     keypadLocked = true;
-    Serial.println("🔒 Teclado activo (bloqueo polling).");
     mensajeEnPantalla("Modo Teclado");
   }
 
@@ -314,7 +228,6 @@ void processKeyCode(uint64_t code) {
   if (isStar(code)) {
     cedulaBuffer = "";
     keypadLocked = false;
-    Serial.println("✖ Borrado por '*', desbloqueado.");
     renderCedulaBuffer();
     return;
   }
@@ -330,9 +243,7 @@ void processKeyCode(uint64_t code) {
 
     // Secreto -> abrir
     if (cedulaBuffer == String(SECRET_CODE)) {
-      Serial.println("🔐 Codigo secreto -> abrirPuerta");
       mensajeEnPantalla("Codigo secreto");
-      indicarExito();
       abrirPuerta();
       cedulaBuffer = "";
       keypadLocked = false;
@@ -342,7 +253,6 @@ void processKeyCode(uint64_t code) {
 
     // 0# → escaneo por huella
     if (cedulaBuffer == "0") {
-      Serial.println("👉 0# detectado: iniciar escaneo de huella");
       cedulaBuffer = "";
       keypadLocked = false;
       iniciarEscaneoHuella(); // módulo de huellas
@@ -356,10 +266,15 @@ void processKeyCode(uint64_t code) {
   }
 
   // Dígitos
-  if (code <= 9) cedulaBuffer += char('0' + (uint8_t)code);
-  else if (code >= 48 && code <= 57) cedulaBuffer += char(code);
-  else Serial.printf("Tecla desconocida: %llu\n", (unsigned long long)code);
-
+  if (code <= 9) {
+    cedulaBuffer += char('0' + (uint8_t)code);
+    keypadLocked = true;
+  }
+  else if (code >= 48 && code <= 57) {
+    cedulaBuffer += char(code);
+    keypadLocked = true;
+  }
+  
   renderCedulaBuffer();
 }
 
@@ -421,11 +336,11 @@ void processSerialCommand(String line) {
 void handleWiegand() {
   // 1. Entrada física Wiegand
   if (wg.available()) {
-    Serial.println("⌨️ Wiegand KEY detectada");
+    // Serial.println("⌨️ KEY"); // Log desactivado por rendimiento
     processKeyCode(wg.getCode());
   }
 
-  // 2. Simulación por Serial (Buffering completo)
+  /* SIMULACIÓN DESACTIVADA POR RENDIMIENTO
   while (Serial.available()) {
     char c = Serial.read();
     if (c == '\n' || c == '\r') {
@@ -437,14 +352,9 @@ void handleWiegand() {
       serialInputBuffer += c;
     }
   }
+  */
 
-  // Timeout
-  if (cedulaBuffer.length() > 0 && (millis() - lastKeyTime > CEDULA_TIMEOUT_MS)) {
-    Serial.println("⌛ Timeout teclado: limpiar y desbloquear.");
-    cedulaBuffer = "";
-    keypadLocked = false;
-    enterKeypadMode();
-  }
+  // Timeout manejado en loop() para centralizar
 }
 
 void verificarCedulaYAccionar(const String& cedula) {
@@ -484,13 +394,14 @@ void verificarCedulaYAccionar(const String& cedula) {
       mensajeEnPantalla(String(mensaje));
 
       if (permitido) {
-        indicarExito();
-        bool okOpen = abrirPuerta();
+        // indicarExito(); // Quitamos para evitar delay extra antes de abrir
+        bool okOpen = abrirPuerta(); // Maneja su propio verde y texto
         (void)okOpen;
         publishEvent("access_card_ok", nullptr);
       } else {
         // En 404 también cae aquí si 'permitido' es false
         indicarFallo(); waitMsWithLed(ERROR_DISPLAY_MS);
+        setColor(currentR, currentG, currentB); // Restaurar
         publishEvent("access_card_denied", nullptr);
       }
     } else {
@@ -510,6 +421,11 @@ void verificarCedulaYAccionar(const String& cedula) {
 // -----------------------------------------------------------------------------
 void conectarWiFi() {
   Serial.print("Conectando a WiFi: "); Serial.println(ssid);
+  
+  // IMPORTANTE: Configuración para evitar latencia y desconexiones con fuente externa
+  WiFi.mode(WIFI_STA); 
+  WiFi.setSleep(false); // Desactiva ahorro de energía (radio siempre activa)
+  
   WiFi.begin(ssid, password);
   int intentos = 0;
   while (WiFi.status() != WL_CONNECTED && intentos < 30) {
@@ -550,35 +466,40 @@ bool abrirPuerta() {
     return false;
   }
 
+  // Callbacks para LEDs manuales (sin updateLed en loop)
   auto onOpenStart = []() {
-    triggerFeedback(FIX_GREEN, DOOR_OPEN_TIME_MS + DOOR_CLOSE_DELAY_MS + 500);
+    setColor(0, 255, 0); // VERDE directo
     mensajeEnPantalla("Bienvenido");
   };
   auto onCloseStart = []() {
     mensajeEnPantalla("Cerrando puerta");
   };
   auto onDone = []() {
-    ledMode = MODE_STATIC;
+    setColor(currentR, currentG, currentB); // Restaurar color de reposo
     keypadLocked = false;
     enterKeypadMode();
   };
-  auto tick = []() { updateLed(); };
+  // Tick vacío, ya no usamos updateLed()
+  auto tick = []() { };
 
   return doorOpenAndClose(DOOR_OPEN_TIME_MS, DOOR_CLOSE_DELAY_MS,
                           onOpenStart, onCloseStart, onDone, tick);
 }
 
 // LED helpers
-void indicarExito(){ triggerFeedback(FIX_GREEN, 1800); }
-void indicarFallo(){ triggerFeedback(FIX_RED,   1800); }
-void indicarProcesando(){ ledMode = MODE_STATIC; }
+// LED helpers con delay bloqueante (pero con smartDelay para teclado)
+void indicarExito(){ 
+  setColor(0, 255, 0); // Verde
+  smartDelay(1000);    // Feedback visible
+}
+void indicarFallo(){ 
+  setColor(255, 0, 0); // Rojo
+  smartDelay(1000);    // Feedback visible
+}
+void indicarProcesando(){ setColor(currentR, currentG, currentB); } 
 void apagarLeds(){ setColor(0,0,0); }
 
+// smartDelay desactivado (se comporta como un delay normal)
 void smartDelay(unsigned long ms) {
-  unsigned long start = millis();
-  while ((millis() - start) < ms) {
-    // if (mqtt.connected()) mqtt.loop(); // REMOVED: Absolute priority to Keypad
-    handleWiegand(); 
-    delay(1);
-  }
+  delay(ms); 
 }

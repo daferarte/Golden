@@ -82,8 +82,22 @@ void onMqttMessage(char* topic, byte* payload, unsigned int len) {
   const char* err = nullptr;
 
   if (strcmp(action, "open_door") == 0 || strcmp(action, "open") == 0) {
+    // 1. Enviar ACK inmediato para evitar timeout del backend (puerta tarda ~6s)
+    StaticJsonDocument<192> ackFast;
+    ackFast["id"] = id;
+    ackFast["ok"] = true; 
+    ackFast["action"] = action;
+    ackFast["ts"] = (long)(millis()/1000);
+    char outFast[192];
+    serializeJson(ackFast, outFast, sizeof(outFast));
+    mqtt.publish(T_ACK.c_str(), outFast);
+
+    // 2. Ejecutar acción (Bloqueante por 5s)
     ok = abrirPuerta();
     publishEvent("door_open", ok ? "ok" : "fail");
+
+    // 3. Salir para no enviar doble ACK
+    return;
   }
   else if (strcmp(action, "set_led") == 0 || strcmp(action, "led") == 0) {
     // Lectura de color
@@ -208,7 +222,7 @@ void nonBlockingMqttLoop() {
   // Not connected: try periodically
   static unsigned long lastMqttAttempt = 0;
   unsigned long now = millis();
-  if (now - lastMqttAttempt > 3000) { // Retry every 3s
+  if (now - lastMqttAttempt > 15000) { // Retry every 15s (reduced from 3s to spare CPU/Blocking)
     lastMqttAttempt = now;
     Serial.println("🔄 MQTT retry (non-blocking)...");
     attemptConnectOneShot();

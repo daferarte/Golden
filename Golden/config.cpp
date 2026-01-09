@@ -25,15 +25,15 @@ const char* SERVER_BASE_URL = "http://192.168.101.65:8000/api/v1/";
 
 // ====== Timings ======
 unsigned long POLLING_INTERVAL_MS   = 4000;
-const unsigned long DOOR_OPEN_TIME_MS   = 5000;
-const unsigned long DOOR_CLOSE_DELAY_MS = 3000;
+const unsigned long DOOR_OPEN_TIME_MS   = 5000; // 5 segundos abierta
+const unsigned long DOOR_CLOSE_DELAY_MS = 1000; // 1 segundo espera tras cerrar (reducido de 3000)
 const unsigned long ERROR_DISPLAY_MS    = 3000;
 
 // ====== Servo mecánica ======
 const int SERVO_MIN_PULSE     = 544;
 const int SERVO_MAX_PULSE     = 2400;
-const int SERVO_CLOSED_ANGLE  = 0;
-const int SERVO_OPEN_ANGLE    = 90;
+const int SERVO_CLOSED_ANGLE  = 0;  // Restaurado
+const int SERVO_OPEN_ANGLE    = 90; // Restaurado
 
 // ====== Sensor huella ======
 const int FINGERPRINT_SCANS    = 2;

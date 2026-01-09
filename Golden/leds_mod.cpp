@@ -54,7 +54,7 @@ void updateLed() {
 void waitMsWithLed(unsigned long ms) {
   unsigned long t0 = millis();
   while ((millis() - t0) < ms) {
-    updateLed();
-    smartDelay(10); // Mantiene MQTT vivo mientras espera
+    // updateLed(); // REMOVED - User requested manual LED control to save performance
+    smartDelay(10); // Mantiene teclado vivo
   }
 }

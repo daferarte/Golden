@@ -71,7 +71,7 @@ static bool waitForNoFinger(unsigned long timeout_ms) {
 
 // ===================== API =====================
 
-bool initFingerprintSensor(bool showLCD) {
+bool initFingerprintSensor(bool showLCD, uint8_t retries) {
   Serial.println("\nInicializando sensor de huellas...");
   if (showLCD) { mensajeEnPantalla("Init sensor"); indicarProcesando(); }
 
@@ -81,7 +81,8 @@ bool initFingerprintSensor(bool showLCD) {
   smartDelay(200);
   while (sensorSerial.available()) sensorSerial.read();
 
-  for (int i = 0; i < 3; i++) {
+  // Intentos de conexión (verifyPassword bloquea ~1s si falla)
+  for (int i = 0; i < retries; i++) {
     if (finger.verifyPassword()) {
       sensorReady = true;
       sensorRetryDelay = SENSOR_RETRY_MS;

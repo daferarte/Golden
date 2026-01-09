@@ -34,7 +34,7 @@ extern const unsigned long SENSOR_RETRY_MS;
 extern const unsigned long SENSOR_RETRY_MAX;
 extern unsigned long sensorRetryDelay;
 
-bool initFingerprintSensor(bool showLCD = true);
+bool initFingerprintSensor(bool showLCD = true, uint8_t retries = 3);
 void scheduleSensorRetry(unsigned long ms);
 
 // Operaciones
